@@ -24,6 +24,10 @@ def get_drive_service():
 # ── Folder IDs ───────────────────────────────────────────────────────────────
 CLIENT_LIFECYCLE_FOLDER_ID = "1JbvYsh8KfUVEikSndaaSYgsfCRvq6wqW"  # Client Lifecycle Content
 COMMUNITY_POSTS_FOLDER_NAME = "6. Community Posts"
+SCREENSHOTS_FOLDER_NAME = "SCREENSHOTS"
+
+# ── PagePixels config ─────────────────────────────────────────────────────────
+PAGEPIXELS_API_KEY = "vIpwjc7PWJTJVoKV5qRTJKNf-S9xlInEjPQDCWBfWzo"
 
 # ── Link detection ───────────────────────────────────────────────────────────
 def extract_links(text):
@@ -159,14 +163,41 @@ def handle_mp3(service, url, dest_folder_id, timestamp):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-def handle_noteflight(url, timestamp):
-    # Noteflight has no public API yet — log the link as a text note
-    return {
-        "status": "logged",
-        "type": "noteflight",
-        "message": "Noteflight link saved as reference — no API access yet",
-        "url": url
-    }
+def take_screenshot(url, timestamp, label="screenshot"):
+    """Use PagePixels API to screenshot a URL and return the image bytes."""
+    try:
+        api_url = "https://pagepixels.com/app/screenshots"
+        params = {
+            "access_token": PAGEPIXELS_API_KEY,
+            "url": url,
+            "full_page": "true",
+            "format": "png",
+        }
+        resp = requests.get(api_url, params=params, timeout=60)
+        resp.raise_for_status()
+        filename = f"{timestamp}_{label}.png"
+        return resp.content, filename
+    except Exception as e:
+        return None, str(e)
+
+def handle_noteflight(service, url, screenshots_folder_id, timestamp):
+    """Screenshot the Noteflight page and save to SCREENSHOTS folder."""
+    img_bytes, filename = take_screenshot(url, timestamp, label="noteflight")
+    if img_bytes:
+        uploaded = upload_to_drive(service, screenshots_folder_id, filename, img_bytes, "image/png")
+        return {"status": "success", "type": "noteflight", "file": uploaded, "saved_to": "SCREENSHOTS"}
+    else:
+        return {"status": "error", "type": "noteflight", "message": filename}
+
+def handle_unknown_with_screenshot(service, url, screenshots_folder_id, timestamp):
+    """Screenshot any unknown link and save to SCREENSHOTS folder."""
+    label = re.sub(r'https?://', '', url).split("/")[0].replace(".", "_")[:30]
+    img_bytes, filename = take_screenshot(url, timestamp, label=label)
+    if img_bytes:
+        uploaded = upload_to_drive(service, screenshots_folder_id, filename, img_bytes, "image/png")
+        return {"status": "success", "type": "screenshot", "file": uploaded, "saved_to": "SCREENSHOTS"}
+    else:
+        return {"status": "error", "type": "unknown", "message": filename}
 
 def save_link_log(service, dest_folder_id, person, links_results, post_title, timestamp):
     """Save a text log of all processed links into the folder."""
@@ -212,9 +243,12 @@ def webhook():
                 "message": f"No lifecycle folder found for '{person}'"
             }), 404
 
-        # 2. Find or create "6. Community Posts" inside client folder
+        # 2. Find or create destination folders inside client folder
         community_folder_id = find_or_create_folder(
             service, client_folder_id, COMMUNITY_POSTS_FOLDER_NAME
+        )
+        screenshots_folder_id = find_or_create_folder(
+            service, client_folder_id, SCREENSHOTS_FOLDER_NAME
         )
 
         # 3. Extract and process all links from the post body
@@ -236,9 +270,9 @@ def webhook():
             elif link_type == "mp3":
                 result = handle_mp3(service, url, community_folder_id, timestamp)
             elif link_type == "noteflight":
-                result = handle_noteflight(url, timestamp)
+                result = handle_noteflight(service, url, screenshots_folder_id, timestamp)
             else:
-                result = {"status": "skipped", "type": "unknown", "url": url}
+                result = handle_unknown_with_screenshot(service, url, screenshots_folder_id, timestamp)
             result["url"] = url
             results.append(result)
 
