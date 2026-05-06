@@ -13,12 +13,15 @@ app = Flask(__name__)
 
 # ── Google Drive setup ──────────────────────────────────────────────────────
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-SERVICE_ACCOUNT_FILE = "credentials.json"
 
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
-    )
+    import json
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        creds_info = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+    else:
+        creds = service_account.Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
     return build("drive", "v3", credentials=creds)
 
 # ── Folder IDs ───────────────────────────────────────────────────────────────
