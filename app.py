@@ -29,9 +29,36 @@ COMMUNITY_POSTS_FOLDER_NAME = "6. Community Posts"
 SCREENSHOTS_FOLDER_NAME = "SCREENSHOTS"
 PAGEPIXELS_API_KEY = "vIpwjc7PWJTJVoKV5qRTJKNf-S9xlInEjPQDCWBfWzo"
 
+# ── Contact ID → Name mapping (no Google Sheets needed) ──────────────────────
+CONTACT_MAP = {
+    "1085145289": "Daniel Spencer",
+    "943181480":  "Justin Giori",
+    "339547327":  "Jeremiah Rodriguez",
+    "348000710":  "Kristian Southall",
+    "407843989":  "Enoch Eliason",
+    "408640836":  "Pierre-Alain Tietz",
+    "559982927":  "Dillon Perez",
+    "573503158":  "Jordan Longstaff",
+    "968573087":  "John Patterson",
+    "658243629":  "Mai Kim",
+    "686215545":  "Timothy Allen",
+    "690580909":  "Jonathan Mercer",
+    "420442632":  "Benni Okanovic",
+    "865348282":  "Vincent Pizzuta",
+    "639819749":  "Connor",
+    "791490882":  "Kris Durocher",
+    "859627209":  "Faisal",
+    "1004217398": "Mason Jones",
+    "1085778924": "Ness Savelkoul",
+    "1123273126": "Michael Assayag",
+    "1147428516": "Sebastian Sanchez",
+    "1201560206": "Samuel Doering",
+    "958959305":  "Bryan Ventura",
+    "1269878364": "Christian Scott",
+}
+
 # ── PagePixels screenshot ─────────────────────────────────────────────────────
 def take_screenshot(url):
-    """Take a full-page screenshot of a URL using PagePixels. Returns image bytes or None."""
     try:
         resp = requests.get(
             "https://pagepixels.com/app/screenshots",
@@ -51,7 +78,6 @@ def take_screenshot(url):
 
 # ── Google Drive helpers ──────────────────────────────────────────────────────
 def find_folder(service, parent_id, name_contains):
-    """Find a subfolder whose name contains the given string."""
     results = service.files().list(
         q=f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false",
         fields="files(id, name)",
@@ -64,7 +90,6 @@ def find_folder(service, parent_id, name_contains):
     return None, None
 
 def find_or_create_folder(service, parent_id, folder_name):
-    """Find a folder by exact name or create it."""
     results = service.files().list(
         q=f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false",
         fields="files(id, name)",
@@ -82,7 +107,6 @@ def find_or_create_folder(service, parent_id, folder_name):
     return folder["id"]
 
 def upload_to_drive(service, folder_id, filename, file_bytes, mime_type):
-    """Upload bytes as a file into a Drive folder."""
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
     file = service.files().create(
         body={"name": filename, "parents": [folder_id]},
@@ -101,22 +125,24 @@ def extract_links(text):
 def webhook():
     data = request.json or {}
 
-    person     = data.get("person", "").strip()      # "Ness Savelkoul [Dr.Ness]"
-    body       = data.get("body", "").strip()         # post content
-    post_title = data.get("post_title", "untitled")  # post title
-    post_url   = data.get("post_url", "").strip()     # community post URL
+    contact_id = str(data.get("contact_id", "")).strip()
+    body       = data.get("body", "").strip()
+    post_title = data.get("post_title", "untitled")
+    post_url   = data.get("post_url", "").strip()
 
+    # Look up person from contact ID
+    person = CONTACT_MAP.get(contact_id)
     if not person:
-        return jsonify({"status": "error", "message": "Missing 'person' field"}), 400
+        return jsonify({
+            "status": "skipped",
+            "message": f"Contact ID '{contact_id}' not in client list — skipping."
+        }), 200
+
     if not post_url:
         return jsonify({"status": "error", "message": "Missing 'post_url' field"}), 400
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M")
-    # Use first name only for folder search
-    clean_name = person.split("[")[0].strip()
-    first_name = clean_name.split()[0] if clean_name else ""
-    if not first_name:
-        return jsonify({"status": "skipped", "message": "No person found — likely a test post, skipping."}), 200
+    timestamp  = datetime.utcnow().strftime("%Y-%m-%d_%H-%M")
+    first_name = person.split()[0]
 
     try:
         service = get_drive_service()
@@ -129,12 +155,12 @@ def webhook():
             return jsonify({"status": "error", "message": f"No lifecycle folder found for '{person}'"}), 404
 
         # 2. Get destination folders
-        community_folder_id  = find_or_create_folder(service, client_folder_id, COMMUNITY_POSTS_FOLDER_NAME)
+        community_folder_id   = find_or_create_folder(service, client_folder_id, COMMUNITY_POSTS_FOLDER_NAME)
         screenshots_folder_id = find_or_create_folder(service, client_folder_id, SCREENSHOTS_FOLDER_NAME)
 
         results = []
 
-        # ── STEP A: Always screenshot the community post itself ───────────────
+        # ── STEP A: Always screenshot the community post ───────────────────────
         post_screenshot = take_screenshot(post_url)
         if post_screenshot:
             safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', post_title)[:40]
@@ -149,7 +175,7 @@ def webhook():
         else:
             results.append({"step": "post_screenshot", "status": "failed", "url": post_url})
 
-        # ── STEP B: Check for links in the post body ──────────────────────────
+        # ── STEP B: Check for links ───────────────────────────────────────────
         links = extract_links(body)
         if not links:
             return jsonify({
