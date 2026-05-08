@@ -113,7 +113,10 @@ def webhook():
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M")
     # Use first name only for folder search
-    first_name = person.split("[")[0].strip().split()[0]
+    clean_name = person.split("[")[0].strip()
+    first_name = clean_name.split()[0] if clean_name else ""
+    if not first_name:
+        return jsonify({"status": "skipped", "message": "No person found — likely a test post, skipping."}), 200
 
     try:
         service = get_drive_service()
